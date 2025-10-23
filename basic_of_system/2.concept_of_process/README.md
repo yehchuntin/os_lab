@@ -1426,4 +1426,1653 @@ exit(1);
 
 ---
 
+## 📖 重要函數與巨集詳解
+
+### 1. `perror()` - 印出錯誤訊息
+
+**用途**：將系統錯誤訊息印到標準錯誤輸出（stderr）
+
+```c
+#include <stdio.h>
+#include <errno.h>
+
+perror("錯誤前綴");
+```
+
+**運作原理**：
+- 自動讀取全域變數 `errno`（錯誤代碼）
+- 轉換成人類可讀的錯誤訊息
+- 格式：`你的訊息: 系統錯誤描述`
+
+**範例**：
+```c
+#include <stdio.h>
+#include <unistd.h>
+
+int main() {
+    pid_t pid = fork();
+    
+    if (pid < 0) {
+        // fork 失敗
+        perror("fork 失敗");
+        // 可能輸出：fork 失敗: Resource temporarily unavailable
+        return 1;
+    }
+    
+    return 0;
+}
+```
+
+**常見錯誤訊息**：
+```c
+perror("open");     // open: No such file or directory
+perror("malloc");   // malloc: Cannot allocate memory
+perror("fork");     // fork: Resource temporarily unavailable
+```
+
+---
+
+### 2. `getpid()` 和 `getppid()` - 取得進程 ID
+
+**用途**：取得進程識別碼
+
+```c
+#include <unistd.h>
+#include <sys/types.h>
+
+pid_t getpid(void);   // 取得自己的 PID
+pid_t getppid(void);  // 取得父進程的 PID
+```
+
+**範例**：
+```c
+#include <stdio.h>
+#include <unistd.h>
+
+int main() {
+    printf("我的 PID: %d\n", getpid());
+    printf("我的父進程 PID: %d\n", getppid());
+    
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        // 子進程
+        printf("\n[子進程]\n");
+        printf("  我的 PID: %d\n", getpid());        // 新的 PID
+        printf("  父進程 PID: %d\n", getppid());     // 原進程的 PID
+    } else {
+        // 父進程
+        printf("\n[父進程]\n");
+        printf("  我的 PID: %d\n", getpid());        // 不變
+        printf("  子進程 PID: %d\n", pid);           // fork() 返回的
+    }
+    
+    return 0;
+}
+```
+
+**輸出範例**：
+```
+我的 PID: 1234
+我的父進程 PID: 1000
+
+[父進程]
+  我的 PID: 1234
+  子進程 PID: 1235
+
+[子進程]
+  我的 PID: 1235
+  父進程 PID: 1234
+```
+
+**用途場景**：
+```c
+// 生成唯一的日誌檔名
+char logfile[100];
+sprintf(logfile, "log_%d.txt", getpid());
+
+// 檢查進程關係
+if (getppid() == 1) {
+    printf("我的父進程是 init，我可能是孤兒進程\n");
+}
+```
+
+---
+
+### 3. `WIFEXITED()` 和 `WEXITSTATUS()` - 檢查退出狀態
+
+**用途**：解析子進程的退出狀態
+
+```c
+#include <sys/wait.h>
+
+WIFEXITED(status)    // 檢查是否正常退出（返回 true/false）
+WEXITSTATUS(status)  // 取得退出碼（0-255）
+```
+
+**完整範例**：
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+int main() {
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        // 子進程：執行任務
+        printf("子進程工作中...\n");
+        sleep(1);
+        
+        // 不同的退出方式
+        exit(42);  // 正常退出，返回 42
+        // return 42;  // 也可以用 return
+        
+    } else {
+        // 父進程：等待並檢查狀態
+        int status;
+        wait(&status);
+        //    ↑ status 存儲子進程的退出資訊
+        
+        printf("\n檢查子進程退出狀態：\n");
+        
+        // 1. 檢查是否正常退出
+        if (WIFEXITED(status)) {
+            printf("✅ 子進程正常退出\n");
+            
+            // 2. 取得退出碼
+            int exit_code = WEXITSTATUS(status);
+            printf("   退出碼: %d\n", exit_code);  // 輸出：42
+            
+            // 3. 根據退出碼判斷結果
+            if (exit_code == 0) {
+                printf("   狀態: 成功\n");
+            } else {
+                printf("   狀態: 失敗（錯誤碼 %d）\n", exit_code);
+            }
+        }
+    }
+    
+    return 0;
+}
+```
+
+**status 的結構**：
+```
+status (32 位元整數)
+┌─────────────┬─────────────┬──────────┐
+│ 未使用      │ 退出碼      │ 信號編號 │
+│ 16 bits     │ 8 bits      │ 8 bits   │
+└─────────────┴─────────────┴──────────┘
+              ↑               ↑
+         WEXITSTATUS()    WTERMSIG()
+```
+
+**實際應用**：
+```c
+// 執行外部程式並檢查結果
+pid_t pid = fork();
+if (pid == 0) {
+    execlp("grep", "grep", "pattern", "file.txt", NULL);
+    exit(127);  // exec 失敗
+} else {
+    int status;
+    wait(&status);
+    
+    if (WIFEXITED(status)) {
+        int code = WEXITSTATUS(status);
+        
+        if (code == 0) {
+            printf("找到匹配\n");
+        } else if (code == 1) {
+            printf("沒找到匹配\n");
+        } else if (code == 127) {
+            printf("程式執行失敗\n");
+        }
+    }
+}
+```
+
+---
+
+### 4. `argv[]` - 命令列參數
+
+**用途**：存儲傳遞給程式的參數
+
+```c
+int main(int argc, char *argv[])
+//         ↑ 參數個數  ↑ 參數陣列
+```
+
+**結構說明**：
+```
+執行: ./program arg1 arg2 arg3
+
+argc = 4
+
+argv[0] = "./program"  ← 程式名稱（重要！）
+argv[1] = "arg1"       ← 第一個參數
+argv[2] = "arg2"       ← 第二個參數
+argv[3] = "arg3"       ← 第三個參數
+argv[4] = NULL         ← 結束標記
+```
+
+**範例程式**：
+```c
+#include <stdio.h>
+
+int main(int argc, char *argv[]) {
+    printf("總共有 %d 個參數\n\n", argc);
+    
+    for (int i = 0; i < argc; i++) {
+        printf("argv[%d] = %s\n", i, argv[i]);
+    }
+    
+    return 0;
+}
+```
+
+**執行與輸出**：
+```bash
+$ ./program hello world 123
+
+總共有 4 個參數
+
+argv[0] = ./program
+argv[1] = hello
+argv[2] = world
+argv[3] = 123
+```
+
+**為什麼 `argv[0]` 重要？**
+
+在 `exec()` 系列函數中，`argv[0]` **通常應該是程式名稱**：
+
+```c
+// ✅ 正確：argv[0] 是程式名
+execlp("ls", "ls", "-l", NULL);
+//          ↑ 程式名  ↑ argv[0]
+
+// ❌ 錯誤：會造成混淆
+execlp("ls", "wrong_name", "-l", NULL);
+
+// exec 系列函數的 argv[0] 規則：
+execl("/bin/ls", "ls", "-l", NULL);
+//    ↑ 實際路徑   ↑ argv[0]（顯示名稱）
+```
+
+**實際應用：建立符號連結**
+```c
+// 同一個程式，不同名稱，不同行為
+int main(int argc, char *argv[]) {
+    if (strcmp(argv[0], "compress") == 0) {
+        // 壓縮模式
+        compress_file();
+    } else if (strcmp(argv[0], "decompress") == 0) {
+        // 解壓模式
+        decompress_file();
+    }
+}
+
+// 使用方式：
+// ln -s program compress
+// ln -s program decompress
+```
+
+---
+
+### 5. `exit()` - 結束進程
+
+**用途**：終止程式並返回狀態碼
+
+```c
+#include <stdlib.h>
+
+void exit(int status);  // 永不返回
+```
+
+**與 `return` 的區別**：
+
+```c
+int main() {
+    if (fork() == 0) {
+        printf("子進程\n");
+        
+        // 方法 1：exit()
+        exit(42);  // ✅ 立即結束，不執行後續代碼
+        
+        // 方法 2：return
+        return 42;  // ✅ 從 main 返回，效果相同
+    }
+    
+    // 在函數中：
+    void some_function() {
+        if (error) {
+            exit(1);    // ✅ 整個程式結束
+            // return 1; // ❌ 只返回到調用者
+        }
+    }
+    
+    return 0;
+}
+```
+
+**狀態碼慣例**：
+```c
+exit(0);   // 成功
+exit(1);   // 一般錯誤
+exit(2);   // 誤用命令
+exit(126); // 命令無法執行
+exit(127); // 命令找不到
+exit(130); // 被 Ctrl+C 中斷
+exit(255); // 退出碼超出範圍
+```
+
+**完整範例**：
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+int main() {
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        // 子進程：模擬任務
+        printf("子進程開始工作...\n");
+        
+        // 假設處理檔案
+        FILE *fp = fopen("data.txt", "r");
+        if (fp == NULL) {
+            perror("無法開啟檔案");
+            exit(1);  // 失敗，返回 1
+        }
+        
+        // 處理資料...
+        printf("處理完成\n");
+        fclose(fp);
+        
+        exit(0);  // 成功，返回 0
+        
+    } else {
+        // 父進程：檢查結果
+        int status;
+        wait(&status);
+        
+        if (WIFEXITED(status)) {
+            int code = WEXITSTATUS(status);
+            
+            if (code == 0) {
+                printf("✅ 任務成功\n");
+            } else {
+                printf("❌ 任務失敗，錯誤碼: %d\n", code);
+            }
+        }
+    }
+    
+    return 0;
+}
+```
+
+**exit() 會做什麼？**
+1. 呼叫所有 `atexit()` 註冊的函數
+2. 刷新（flush）所有開啟的 stdio 串流
+3. 關閉所有開啟的檔案
+4. 刪除 `tmpfile()` 建立的暫存檔
+5. 返回退出碼給父進程
+
+```c
+void cleanup() {
+    printf("清理資源...\n");
+}
+
+int main() {
+    atexit(cleanup);  // 註冊清理函數
+    
+    printf("程式運行中\n");
+    exit(0);  // 會先呼叫 cleanup()
+}
+```
+
+---
+
+### 6. `wait(&status)` - 等待並取得狀態
+
+**用途**：等待子進程結束，並取得退出資訊
+
+```c
+#include <sys/wait.h>
+
+pid_t wait(int *status);
+//          ↑ 指標，用來存儲子進程的退出狀態
+```
+
+**status 的用法**：
+
+```c
+int status;  // 定義變數來存儲狀態
+
+wait(&status);  // 傳遞位址，讓 wait() 寫入資料
+//   ↑ 取址運算子
+
+// 現在 status 包含子進程的退出資訊
+```
+
+**完整範例**：
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+int main() {
+    printf("=== wait() 詳細示範 ===\n\n");
+    
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        // 子進程
+        printf("子進程 (PID:%d) 工作 3 秒...\n", getpid());
+        sleep(3);
+        printf("子進程完成\n");
+        exit(5);  // 返回 5
+        
+    } else {
+        // 父進程
+        printf("父進程 (PID:%d) 等待子進程 (PID:%d)...\n", 
+               getpid(), pid);
+        
+        int status;  // 1. 準備狀態變數
+        
+        pid_t finished_pid = wait(&status);  // 2. 等待（阻塞）
+        //                        ↑ 傳遞位址
+        
+        printf("\n子進程 %d 已結束\n", finished_pid);
+        
+        // 3. 解析 status
+        printf("\n狀態分析：\n");
+        printf("  原始 status: 0x%x\n", status);
+        
+        if (WIFEXITED(status)) {
+            printf("  ✅ 正常退出\n");
+            printf("  退出碼: %d\n", WEXITSTATUS(status));
+        }
+        
+        if (WIFSIGNALED(status)) {
+            printf("  ⚠️  被信號終止\n");
+            printf("  信號: %d\n", WTERMSIG(status));
+        }
+    }
+    
+    return 0;
+}
+```
+
+**不使用 status（簡化版）**：
+```c
+// 如果不關心退出狀態
+wait(NULL);  // 只等待，不取得狀態
+
+// 等待多個子進程
+for (int i = 0; i < num_children; i++) {
+    wait(NULL);  // 簡單回收
+}
+```
+
+---
+
+### 7. `WIFSIGNALED()` 和 `WTERMSIG()` - 檢查信號終止
+
+**用途**：檢查子進程是否被信號（signal）終止
+
+```c
+#include <sys/wait.h>
+
+WIFSIGNALED(status)  // 是否被信號殺死？
+WTERMSIG(status)     // 哪個信號？
+```
+
+**常見信號**：
+```c
+SIGKILL  (9)   // 強制終止（無法捕捉）
+SIGTERM  (15)  // 要求終止（可捕捉）
+SIGINT   (2)   // Ctrl+C
+SIGSEGV  (11)  // 記憶體錯誤（Segmentation Fault）
+SIGABRT  (6)   // abort() 呼叫
+```
+
+**範例程式**：
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
+
+int main() {
+    printf("=== 信號處理示範 ===\n\n");
+    
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        // 子進程：故意製造錯誤
+        printf("子進程：我要做壞事了...\n");
+        sleep(1);
+        
+        // 方法 1：觸發段錯誤
+        // int *p = NULL;
+        // *p = 42;  // SIGSEGV
+        
+        // 方法 2：主動終止
+        raise(SIGTERM);  // 發送 SIGTERM 給自己
+        
+    } else {
+        // 父進程：監控子進程
+        int status;
+        wait(&status);
+        
+        printf("\n=== 子進程終止分析 ===\n");
+        
+        // 檢查終止方式
+        if (WIFEXITED(status)) {
+            printf("方式: 正常退出\n");
+            printf("退出碼: %d\n", WEXITSTATUS(status));
+            
+        } else if (WIFSIGNALED(status)) {
+            printf("方式: 被信號終止 ⚠️\n");
+            
+            int sig = WTERMSIG(status);
+            printf("信號編號: %d\n", sig);
+            
+            // 顯示信號名稱
+            switch(sig) {
+                case SIGTERM:
+                    printf("信號名稱: SIGTERM (終止請求)\n");
+                    break;
+                case SIGKILL:
+                    printf("信號名稱: SIGKILL (強制終止)\n");
+                    break;
+                case SIGSEGV:
+                    printf("信號名稱: SIGSEGV (記憶體錯誤)\n");
+                    break;
+                case SIGINT:
+                    printf("信號名稱: SIGINT (Ctrl+C)\n");
+                    break;
+                default:
+                    printf("信號名稱: 未知\n");
+            }
+            
+            // 檢查是否產生 core dump
+            if (WCOREDUMP(status)) {
+                printf("Core dump: 是\n");
+            }
+        }
+    }
+    
+    return 0;
+}
+```
+
+**實際應用：超時終止**
+```c
+#include <stdio.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
+
+int main() {
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        // 子進程：可能執行很久的任務
+        printf("開始長時間任務...\n");
+        sleep(100);  // 模擬長時間運行
+        exit(0);
+        
+    } else {
+        // 父進程：設定超時
+        printf("等待 3 秒...\n");
+        sleep(3);
+        
+        // 超時，強制終止子進程
+        printf("超時！終止子進程\n");
+        kill(pid, SIGTERM);  // 發送 SIGTERM
+        
+        sleep(1);  // 給它時間清理
+        
+        // 如果還沒結束，強制殺死
+        kill(pid, SIGKILL);  // 發送 SIGKILL
+        
+        // 回收
+        int status;
+        wait(&status);
+        
+        if (WIFSIGNALED(status)) {
+            printf("子進程被信號 %d 終止\n", WTERMSIG(status));
+        }
+    }
+    
+    return 0;
+}
+```
+
+---
+
+### 8. `sleep()` - 暫停執行
+
+**用途**：讓程式暫停指定秒數
+
+```c
+#include <unistd.h>
+
+unsigned int sleep(unsigned int seconds);
+// 返回值：如果被中斷，返回剩餘秒數
+```
+
+**基本用法**：
+```c
+#include <stdio.h>
+#include <unistd.h>
+
+int main() {
+    printf("開始\n");
+    
+    sleep(3);  // 暫停 3 秒
+    
+    printf("3 秒後\n");
+    
+    return 0;
+}
+```
+
+**更精確的時間控制**：
+```c
+#include <unistd.h>
+
+// 微秒級暫停（1 微秒 = 0.000001 秒）
+usleep(500000);  // 0.5 秒
+
+// 奈秒級暫停（更精確）
+#include <time.h>
+struct timespec ts = {.tv_sec = 1, .tv_nsec = 500000000};
+nanosleep(&ts, NULL);  // 1.5 秒
+```
+
+**實際應用：模擬工作**
+```c
+#include <stdio.h>
+#include <unistd.h>
+
+void simulate_work(const char *task, int seconds) {
+    printf("⏳ %s (預計 %d 秒)...\n", task, seconds);
+    
+    for (int i = 1; i <= seconds; i++) {
+        sleep(1);
+        printf("   進度: %d/%d\n", i, seconds);
+    }
+    
+    printf("✅ %s 完成\n\n", task);
+}
+
+int main() {
+    simulate_work("下載檔案", 3);
+    simulate_work("處理資料", 2);
+    simulate_work("上傳結果", 2);
+    
+    return 0;
+}
+```
+
+**被信號中斷**：
+```c
+#include <stdio.h>
+#include <unistd.h>
+#include <signal.h>
+
+void handle_signal(int sig) {
+    printf("\n收到信號 %d\n", sig);
+}
+
+int main() {
+    signal(SIGINT, handle_signal);  // 捕捉 Ctrl+C
+    
+    printf("睡眠 10 秒（按 Ctrl+C 中斷）\n");
+    
+    unsigned int remaining = sleep(10);
+    
+    if (remaining > 0) {
+        printf("被中斷，還剩 %u 秒\n", remaining);
+    } else {
+        printf("完整睡眠完成\n");
+    }
+    
+    return 0;
+}
+```
+
+---
+
+### 9. `sprintf()` - 格式化字串
+
+**用途**：將格式化的資料寫入字串（類似 printf，但輸出到字串）
+
+```c
+#include <stdio.h>
+
+int sprintf(char *str, const char *format, ...);
+//          ↑ 目標字串  ↑ 格式字串  ↑ 參數
+```
+
+**基本範例**：
+```c
+#include <stdio.h>
+
+int main() {
+    char buffer[100];
+    
+    // 基本用法
+    sprintf(buffer, "Hello, %s!", "World");
+    printf("%s\n", buffer);  // Hello, World!
+    
+    // 組合多個變數
+    int age = 25;
+    char name[] = "Alice";
+    sprintf(buffer, "%s is %d years old", name, age);
+    printf("%s\n", buffer);  // Alice is 25 years old
+    
+    // 數字格式化
+    sprintf(buffer, "編號: %04d", 42);
+    printf("%s\n", buffer);  // 編號: 0042
+    
+    return 0;
+}
+```
+
+**⚠️ 危險用法（容易被攻擊）**：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    char filename[100];
+    char command[256];
+    
+    printf("輸入檔案名: ");
+    scanf("%s", filename);
+    
+    // ❌ 危險！
+    sprintf(command, "rm %s", filename);
+    system(command);
+    
+    // 如果用戶輸入: test.txt; rm -rf /
+    // 實際執行: rm test.txt; rm -rf /
+    // 災難！
+    
+    return 0;
+}
+```
+
+**✅ 安全的替代方案**：
+
+```c
+// 方法 1：使用 snprintf（限制長度）
+char command[256];
+snprintf(command, sizeof(command), "rm %s", filename);
+//       ↑ 防止緩衝區溢出
+
+// 方法 2：驗證輸入
+if (strchr(filename, ';') || strchr(filename, '|')) {
+    fprintf(stderr, "非法字元\n");
+    return 1;
+}
+
+// 方法 3：使用 fork + exec（最安全）
+pid_t pid = fork();
+if (pid == 0) {
+    execlp("rm", "rm", filename, NULL);  // 不經過 shell
+    exit(1);
+}
+wait(NULL);
+```
+
+**實用範例**：
+```c
+#include <stdio.h>
+#include <time.h>
+
+int main() {
+    char filename[100];
+    
+    // 1. 生成帶時間戳的檔名
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    
+    sprintf(filename, "backup_%04d%02d%02d_%02d%02d%02d.tar.gz",
+            t->tm_year + 1900, 
+            t->tm_mon + 1,
+            t->tm_mday,
+            t->tm_hour,
+            t->tm_min,
+            t->tm_sec);
+    
+    printf("檔名: %s\n", filename);
+    // backup_20250101_143025.tar.gz
+    
+    // 2. 建立 SQL 查詢
+    char query[256];
+    int user_id = 123;
+    sprintf(query, "SELECT * FROM users WHERE id = %d", user_id);
+    printf("SQL: %s\n", query);
+    
+    // 3. 格式化路徑
+    char path[256];
+    sprintf(path, "/home/%s/documents/%s", "user", "file.txt");
+    printf("路徑: %s\n", path);
+    
+    return 0;
+}
+```
+
+**sprintf vs snprintf vs asprintf**：
+
+```c
+char buf[50];
+
+// sprintf - 不檢查長度（危險）
+sprintf(buf, "%s", very_long_string);  // 可能溢出！
+
+// snprintf - 安全版本
+snprintf(buf, sizeof(buf), "%s", very_long_string);  // ✅ 安全
+
+// asprintf - 自動分配記憶體（GNU 擴展）
+char *result;
+asprintf(&result, "%s", very_long_string);
+// 使用 result...
+free(result);  // 記得釋放
+```
+
+---
+
+## 📊 函數對照表
+
+| 函數/巨集 | 標頭檔 | 用途 | 返回值 |
+|----------|--------|------|--------|
+| `perror()` | `<stdio.h>` | 印出錯誤訊息 | void |
+| `getpid()` | `<unistd.h>` | 取得自己的 PID | pid_t |
+| `getppid()` | `<unistd.h>` | 取得父進程 PID | pid_t |
+| `WIFEXITED()` | `<sys/wait.h>` | 是否正常退出 | int (bool) |
+| `WEXITSTATUS()` | `<sys/wait.h>` | 取得退出碼 | int (0-255) |
+| `WIFSIGNALED()` | `<sys/wait.h>` | 是否被信號終止 | int (bool) |
+| `WTERMSIG()` | `<sys/wait.h>` | 取得終止信號 | int |
+| `exit()` | `<stdlib.h>` | 結束進程 | 不返回 |
+| `sleep()` | `<unistd.h>` | 暫停 (秒) | unsigned int |
+| `sprintf()` | `<stdio.h>` | 格式化字串 | int (寫入字元數) |
+
+---
+
+---
+
+## 🎓 快速查詢指南
+
+### 常用函數速查
+
+```c
+// === 進程管理 ===
+pid_t pid = fork();              // 創建子進程
+pid_t my_pid = getpid();         // 取得自己的 PID
+pid_t parent_pid = getppid();    // 取得父進程 PID
+exit(0);                         // 結束進程（成功）
+exit(1);                         // 結束進程（失敗）
+
+// === 執行程式 ===
+execlp("ls", "ls", "-l", NULL);  // 執行外部程式（PATH搜索）
+execl("/bin/ls", "ls", "-l", NULL);  // 執行程式（完整路徑）
+system("ls -l");                 // 執行 shell 命令
+
+// === 等待子進程 ===
+int status;
+wait(&status);                   // 等待任意子進程
+waitpid(pid, &status, 0);        // 等待特定子進程
+waitpid(-1, &status, WNOHANG);   // 非阻塞檢查
+
+// === 狀態檢查 ===
+if (WIFEXITED(status)) {         // 是否正常退出？
+    int code = WEXITSTATUS(status);  // 取得退出碼
+}
+if (WIFSIGNALED(status)) {       // 是否被信號終止？
+    int sig = WTERMSIG(status);  // 取得信號編號
+}
+
+// === 錯誤處理 ===
+perror("錯誤訊息");              // 印出系統錯誤
+if (pid < 0) {
+    perror("fork");
+    exit(1);
+}
+
+// === 字串處理 ===
+char buf[100];
+sprintf(buf, "格式 %d", 123);    // 格式化字串
+snprintf(buf, sizeof(buf), "安全格式 %s", str);  // 安全版本
+
+// === 時間控制 ===
+sleep(3);                        // 暫停 3 秒
+usleep(500000);                  // 暫停 0.5 秒（微秒）
+```
+
+---
+
+## 🔍 除錯技巧
+
+### 1. 追蹤進程創建
+
+```c
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+void print_process_info(const char *label) {
+    printf("[%s] PID:%d, PPID:%d\n", label, getpid(), getppid());
+}
+
+int main() {
+    print_process_info("程式開始");
+    
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        print_process_info("子進程");
+        sleep(1);
+    } else {
+        print_process_info("父進程");
+        wait(NULL);
+    }
+    
+    print_process_info("結束");
+    return 0;
+}
+```
+
+### 2. 使用 strace 追蹤系統調用
+
+```bash
+# 追蹤程式的所有系統調用
+strace ./your_program
+
+# 只看 fork/exec/wait 相關
+strace -e trace=fork,execve,wait4 ./your_program
+
+# 追蹤子進程
+strace -f ./your_program
+
+# 輸出到檔案
+strace -o trace.log ./your_program
+```
+
+### 3. 檢查殭屍進程
+
+```bash
+# 列出所有進程狀態
+ps aux | head -1; ps aux | grep Z
+
+# 查看進程樹
+pstree -p
+
+# 監控進程
+top
+# 按下 'f' 選擇顯示欄位，找到 S (state)
+# Z = 殭屍進程
+```
+
+### 4. GDB 調試多進程
+
+```bash
+# 啟動 GDB
+gdb ./your_program
+
+# 設定跟隨模式
+(gdb) set follow-fork-mode child   # 跟隨子進程
+(gdb) set follow-fork-mode parent  # 跟隨父進程（預設）
+
+# 設定分離模式
+(gdb) set detach-on-fork off  # 同時調試父子進程
+
+# 查看所有進程
+(gdb) info inferiors
+
+# 切換進程
+(gdb) inferior 2
+
+# 在 fork 處設定斷點
+(gdb) break fork
+(gdb) run
+```
+
+### 5. 日誌記錄最佳實踐
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <time.h>
+#include <sys/types.h>
+
+void log_message(const char *level, const char *msg) {
+    time_t now = time(NULL);
+    char *timestr = ctime(&now);
+    timestr[24] = '\0';  // 移除換行
+    
+    fprintf(stderr, "[%s] [%s] PID:%d - %s\n", 
+            timestr, level, getpid(), msg);
+}
+
+int main() {
+    log_message("INFO", "程式啟動");
+    
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        log_message("DEBUG", "子進程開始執行");
+        sleep(1);
+        log_message("INFO", "子進程完成");
+        exit(0);
+    } else if (pid > 0) {
+        log_message("DEBUG", "父進程等待子進程");
+        wait(NULL);
+        log_message("INFO", "父進程完成");
+    } else {
+        log_message("ERROR", "fork 失敗");
+        exit(1);
+    }
+    
+    return 0;
+}
+```
+
+---
+
+## 💡 進階主題
+
+### 1. 進程間通信（IPC）
+
+#### 管道（Pipe）
+
+```c
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+
+int main() {
+    int pipefd[2];  // pipefd[0]=讀端, pipefd[1]=寫端
+    char buffer[100];
+    
+    // 創建管道
+    if (pipe(pipefd) == -1) {
+        perror("pipe");
+        return 1;
+    }
+    
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        // 子進程：寫入資料
+        close(pipefd[0]);  // 關閉讀端
+        
+        const char *msg = "Hello from child!";
+        write(pipefd[1], msg, strlen(msg) + 1);
+        
+        close(pipefd[1]);
+        exit(0);
+        
+    } else {
+        // 父進程：讀取資料
+        close(pipefd[1]);  // 關閉寫端
+        
+        read(pipefd[0], buffer, sizeof(buffer));
+        printf("父進程收到: %s\n", buffer);
+        
+        close(pipefd[0]);
+        wait(NULL);
+    }
+    
+    return 0;
+}
+```
+
+#### 共享記憶體
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <string.h>
+
+int main() {
+    // 創建共享記憶體
+    int *shared = mmap(NULL, sizeof(int),
+                       PROT_READ | PROT_WRITE,
+                       MAP_SHARED | MAP_ANONYMOUS,
+                       -1, 0);
+    
+    if (shared == MAP_FAILED) {
+        perror("mmap");
+        return 1;
+    }
+    
+    *shared = 0;  // 初始值
+    
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        // 子進程：寫入
+        for (int i = 0; i < 5; i++) {
+            (*shared)++;
+            printf("子進程: shared = %d\n", *shared);
+            sleep(1);
+        }
+        exit(0);
+        
+    } else {
+        // 父進程：讀取
+        wait(NULL);
+        printf("父進程: 最終值 = %d\n", *shared);
+        
+        // 清理
+        munmap(shared, sizeof(int));
+    }
+    
+    return 0;
+}
+```
+
+### 2. 信號處理
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <unistd.h>
+
+volatile sig_atomic_t got_signal = 0;
+
+void signal_handler(int signum) {
+    printf("\n收到信號 %d\n", signum);
+    got_signal = 1;
+}
+
+int main() {
+    // 設定信號處理器
+    signal(SIGINT, signal_handler);   // Ctrl+C
+    signal(SIGTERM, signal_handler);  // kill 命令
+    
+    printf("程式運行中... (按 Ctrl+C 測試)\n");
+    printf("PID: %d\n", getpid());
+    
+    while (!got_signal) {
+        printf("工作中...\n");
+        sleep(2);
+    }
+    
+    printf("正在清理資源...\n");
+    sleep(1);
+    printf("程式正常退出\n");
+    
+    return 0;
+}
+```
+
+### 3. 進程池實現
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+#define POOL_SIZE 4
+#define TASK_COUNT 10
+
+void worker_process(int worker_id) {
+    printf("👷 工人 %d 啟動 (PID:%d)\n", worker_id, getpid());
+    
+    while (1) {
+        // 實際應用中，這裡會從隊列獲取任務
+        sleep(1);
+        printf("工人 %d 處理任務\n", worker_id);
+    }
+}
+
+int main() {
+    pid_t workers[POOL_SIZE];
+    
+    printf("🏭 創建進程池 (大小: %d)\n", POOL_SIZE);
+    
+    // 創建工人進程
+    for (int i = 0; i < POOL_SIZE; i++) {
+        workers[i] = fork();
+        
+        if (workers[i] == 0) {
+            // 子進程
+            worker_process(i + 1);
+            exit(0);
+        } else if (workers[i] < 0) {
+            perror("fork");
+            exit(1);
+        }
+    }
+    
+    // 主進程：分配任務
+    printf("📋 主進程分配任務...\n");
+    sleep(5);  // 模擬運行
+    
+    // 終止所有工人
+    printf("🛑 關閉進程池\n");
+    for (int i = 0; i < POOL_SIZE; i++) {
+        kill(workers[i], SIGTERM);
+        waitpid(workers[i], NULL, 0);
+    }
+    
+    printf("✅ 進程池已關閉\n");
+    return 0;
+}
+```
+
+### 4. 守護進程完整實現
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <syslog.h>
+
+void daemonize() {
+    pid_t pid;
+    
+    // 1. Fork 並讓父進程退出
+    pid = fork();
+    if (pid < 0) exit(EXIT_FAILURE);
+    if (pid > 0) exit(EXIT_SUCCESS);
+    
+    // 2. 創建新會話
+    if (setsid() < 0) exit(EXIT_FAILURE);
+    
+    // 3. 忽略信號
+    signal(SIGCHLD, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
+    
+    // 4. 再次 Fork
+    pid = fork();
+    if (pid < 0) exit(EXIT_FAILURE);
+    if (pid > 0) exit(EXIT_SUCCESS);
+    
+    // 5. 設定文件權限掩碼
+    umask(0);
+    
+    // 6. 改變工作目錄
+    chdir("/");
+    
+    // 7. 關閉文件描述符
+    for (int fd = sysconf(_SC_OPEN_MAX); fd >= 0; fd--) {
+        close(fd);
+    }
+    
+    // 8. 重定向標準輸入/輸出/錯誤到 /dev/null
+    stdin = fopen("/dev/null", "r");
+    stdout = fopen("/dev/null", "w+");
+    stderr = fopen("/dev/null", "w+");
+}
+
+int main() {
+    daemonize();
+    
+    // 使用 syslog 記錄日誌
+    openlog("mydaemon", LOG_PID, LOG_DAEMON);
+    syslog(LOG_INFO, "守護進程啟動");
+    
+    // 守護進程主循環
+    while (1) {
+        syslog(LOG_INFO, "守護進程運行中...");
+        sleep(60);  // 每分鐘記錄一次
+    }
+    
+    closelog();
+    return 0;
+}
+```
+
+---
+
+## 📈 性能優化
+
+### 1. 減少 fork 開銷
+
+```c
+// ❌ 低效：頻繁 fork
+for (int i = 0; i < 1000; i++) {
+    if (fork() == 0) {
+        process_task(i);
+        exit(0);
+    }
+    wait(NULL);
+}
+
+// ✅ 高效：使用進程池
+#define WORKERS 8
+for (int i = 0; i < WORKERS; i++) {
+    if (fork() == 0) {
+        // 工人進程持續處理任務
+        while (has_tasks()) {
+            process_task();
+        }
+        exit(0);
+    }
+}
+```
+
+### 2. 使用 vfork（謹慎使用）
+
+```c
+// vfork：不複製記憶體，更快但危險
+pid_t pid = vfork();
+if (pid == 0) {
+    // ⚠️ 只能調用 exec 或 _exit
+    execl("/bin/ls", "ls", NULL);
+    _exit(1);  // 必須用 _exit，不能用 exit
+}
+```
+
+### 3. Copy-on-Write 優化
+
+```c
+// fork 使用 COW（寫時複製）
+// 只有寫入時才真正複製記憶體
+
+int huge_array[1000000];  // 大陣列
+
+pid_t pid = fork();
+if (pid == 0) {
+    // 只讀：不會複製記憶體
+    printf("%d\n", huge_array[0]);
+    
+    // 寫入：才複製這一頁記憶體
+    huge_array[0] = 42;
+}
+```
+
+---
+
+## 🔒 安全性考量
+
+### 1. 避免命令注入
+
+```c
+// ❌ 危險
+char cmd[256];
+sprintf(cmd, "rm %s", user_input);
+system(cmd);  // 容易被注入
+
+// ✅ 安全
+pid_t pid = fork();
+if (pid == 0) {
+    execlp("rm", "rm", user_input, NULL);  // 不經過 shell
+    exit(1);
+}
+wait(NULL);
+```
+
+### 2. 驗證輸入
+
+```c
+#include <ctype.h>
+#include <string.h>
+
+int is_safe_filename(const char *filename) {
+    // 只允許字母、數字、底線、點、減號
+    for (int i = 0; filename[i]; i++) {
+        char c = filename[i];
+        if (!isalnum(c) && c != '_' && c != '.' && c != '-') {
+            return 0;
+        }
+    }
+    
+    // 不允許路徑遍歷
+    if (strstr(filename, "..") != NULL) {
+        return 0;
+    }
+    
+    return 1;
+}
+```
+
+### 3. 限制資源使用
+
+```c
+#include <sys/resource.h>
+
+void limit_resources() {
+    struct rlimit limit;
+    
+    // 限制 CPU 時間（秒）
+    limit.rlim_cur = 5;
+    limit.rlim_max = 5;
+    setrlimit(RLIMIT_CPU, &limit);
+    
+    // 限制記憶體（位元組）
+    limit.rlim_cur = 100 * 1024 * 1024;  // 100 MB
+    limit.rlim_max = 100 * 1024 * 1024;
+    setrlimit(RLIMIT_AS, &limit);
+    
+    // 限制進程數
+    limit.rlim_cur = 10;
+    limit.rlim_max = 10;
+    setrlimit(RLIMIT_NPROC, &limit);
+}
+
+int main() {
+    pid_t pid = fork();
+    if (pid == 0) {
+        limit_resources();
+        // 執行不受信任的代碼...
+        exit(0);
+    }
+    wait(NULL);
+    return 0;
+}
+```
+
+---
+
+## 🎯 實戰項目
+
+### 項目 1：簡易 Web 服務器
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <sys/wait.h>
+#include <signal.h>
+
+#define PORT 8080
+#define BACKLOG 10
+
+void handle_client(int client_fd) {
+    char buffer[1024];
+    read(client_fd, buffer, sizeof(buffer));
+    
+    // 簡單的 HTTP 回應
+    const char *response = 
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/html\r\n\r\n"
+        "<h1>Hello from fork()!</h1>"
+        "<p>Process ID: %d</p>";
+    
+    char html[2048];
+    sprintf(html, response, getpid());
+    write(client_fd, html, strlen(html));
+    
+    close(client_fd);
+}
+
+void sigchld_handler(int sig) {
+    // 回收殭屍進程
+    while (waitpid(-1, NULL, WNOHANG) > 0);
+}
+
+int main() {
+    int server_fd, client_fd;
+    struct sockaddr_in address;
+    
+    // 設定信號處理
+    signal(SIGCHLD, sigchld_handler);
+    
+    // 創建 socket
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    
+    // 綁定地址
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(PORT);
+    
+    bind(server_fd, (struct sockaddr *)&address, sizeof(address));
+    listen(server_fd, BACKLOG);
+    
+    printf("🌐 服務器運行在 http://localhost:%d\n", PORT);
+    
+    // 主循環
+    while (1) {
+        client_fd = accept(server_fd, NULL, NULL);
+        
+        if (client_fd < 0) {
+            perror("accept");
+            continue;
+        }
+        
+        // 為每個客戶端創建子進程
+        pid_t pid = fork();
+        
+        if (pid == 0) {
+            // 子進程處理客戶端
+            close(server_fd);  // 不需要監聽 socket
+            handle_client(client_fd);
+            exit(0);
+            
+        } else if (pid > 0) {
+            // 父進程繼續接受連接
+            close(client_fd);  // 父進程不處理客戶端
+            
+        } else {
+            perror("fork");
+        }
+    }
+    
+    close(server_fd);
+    return 0;
+}
+```
+
+### 項目 2：並行文件搜索
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <sys/wait.h>
+
+void search_in_file(const char *filename, const char *pattern) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) return;
+    
+    char line[1024];
+    int line_num = 0;
+    
+    while (fgets(line, sizeof(line), fp)) {
+        line_num++;
+        if (strstr(line, pattern)) {
+            printf("[PID %d] %s:%d: %s", getpid(), filename, line_num, line);
+        }
+    }
+    
+    fclose(fp);
+}
+
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        fprintf(stderr, "用法: %s <搜索字串>\n", argv[0]);
+        return 1;
+    }
+    
+    const char *pattern = argv[1];
+    DIR *dir = opendir(".");
+    struct dirent *entry;
+    int child_count = 0;
+    
+    printf("🔍 搜索 '%s' 中...\n\n", pattern);
+    
+    while ((entry = readdir(dir)) != NULL) {
+        // 只處理 .c 和 .txt 文件
+        if (strstr(entry->d_name, ".c") || strstr(entry->d_name, ".txt")) {
+            
+            pid_t pid = fork();
+            
+            if (pid == 0) {
+                // 子進程搜索一個文件
+                search_in_file(entry->d_name, pattern);
+                exit(0);
+                
+            } else if (pid > 0) {
+                child_count++;
+            }
+        }
+    }
+    
+    closedir(dir);
+    
+    // 等待所有子進程
+    for (int i = 0; i < child_count; i++) {
+        wait(NULL);
+    }
+    
+    printf("\n✅ 搜索完成\n");
+    return 0;
+}
+```
+
+---
+
+## 📚 延伸閱讀
+
+### 推薦書籍
+1. **Advanced Programming in the UNIX Environment (APUE)** - W. Richard Stevens
+2. **The Linux Programming Interface** - Michael Kerrisk
+3. **Unix Network Programming** - W. Richard Stevens
+
+### 線上資源
+- [Linux Man Pages](https://man7.org/linux/man-pages/)
+- [fork(2) manual](https://man7.org/linux/man-pages/man2/fork.2.html)
+- [exec(3) manual](https://man7.org/linux/man-pages/man3/exec.3.html)
+- [wait(2) manual](https://man7.org/linux/man-pages/man2/wait.2.html)
+
+### 相關主題
+- 執行緒 (Threads) vs 進程 (Processes)
+- 協程 (Coroutines)
+- 非同步 I/O
+- 容器化技術 (Docker, LXC)
+
+---
+
 **Happy Coding! 🚀**
