@@ -1,0 +1,5 @@
+這是 my_script.py 產生的結果！
+參數：
+  my_script.py
+  --output
+  result.txt
